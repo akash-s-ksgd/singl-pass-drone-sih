@@ -1,0 +1,11 @@
+# Minimal requirements to run the prototype server
+fastapi==0.115.0
+uvicorn[standard]==0.30.0
+python-multipart==0.0.9
+pydantic==2.9.0
+python-dotenv==1.0.1
+opencv-python-headless==4.10.0.84
+numpy>=1.26.0,<2.0
+Pillow>=10.0.0
+loguru==0.7.2
+aiofiles==24.1.0

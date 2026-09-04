@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+venv/
+env/
+.venv/
+
+# Data
+data/uploads/*
+data/frames/*
+data/outputs/*
+data/models/*
+!data/**/.gitkeep
+
+# Models
+ml_models/weights/*
+!ml_models/weights/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+*.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node (frontend)
+node_modules/
+frontend/.next/
+frontend/out/
+
+# Docker
+docker/.env
+
+# Logs
+*.log
+logs/

@@ -1,0 +1,42 @@
+# ===== Core =====
+fastapi==0.115.0
+uvicorn[standard]==0.30.0
+python-multipart==0.0.9
+pydantic==2.9.0
+python-dotenv==1.0.1
+
+# ===== Computer Vision =====
+opencv-python-headless==4.10.0.84
+numpy>=1.26.0,<2.0
+Pillow>=10.0.0
+
+# ===== 3D Processing =====
+open3d==0.18.0
+trimesh==4.4.0
+scipy>=1.12.0
+
+# ===== AI / Deep Learning =====
+torch>=2.1.0
+torchvision>=0.16.0
+transformers>=4.40.0
+
+# ===== Video Processing =====
+ffmpeg-python==0.2.0
+
+# ===== Database =====
+sqlalchemy==2.0.35
+aiosqlite==0.20.0
+
+# ===== Task Queue =====
+celery[redis]==5.4.0
+redis==5.0.0
+
+# ===== Geospatial =====
+pyproj==3.6.1
+
+# ===== Utilities =====
+tqdm>=4.66.0
+loguru==0.7.2
+aiofiles==24.1.0
+websockets==12.0
+uuid6==2024.7.10

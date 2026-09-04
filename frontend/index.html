@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Single-Pass Drone Video to 3D Model — Confidence-aware, sensor-fused hybrid reconstruction system">
+    <title>Drone 3D Reconstruction System</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+<body>
+    <!-- ─── Ambient Background ─── -->
+    <div class="ambient-bg">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+    </div>
+
+    <!-- ─── Navigation ─── -->
+    <nav id="navbar">
+        <div class="nav-brand">
+            <div class="brand-icon">
+                <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M16 4L28 10V22L16 28L4 22V10L16 4Z" stroke="currentColor" stroke-width="2" fill="none"/>
+                    <path d="M16 4V28" stroke="currentColor" stroke-width="1.5" opacity="0.5"/>
+                    <path d="M4 10L28 22" stroke="currentColor" stroke-width="1.5" opacity="0.5"/>
+                    <path d="M28 10L4 22" stroke="currentColor" stroke-width="1.5" opacity="0.5"/>
+                    <circle cx="16" cy="16" r="3" fill="currentColor" opacity="0.8"/>
+                </svg>
+            </div>
+            <span>Drone3D <span class="badge">Prototype</span></span>
+        </div>
+        <div class="nav-links">
+            <button class="nav-btn active" data-page="upload" id="nav-upload">Upload</button>
+            <button class="nav-btn" data-page="dashboard" id="nav-dashboard">Dashboard</button>
+            <button class="nav-btn" data-page="viewer" id="nav-viewer">3D Viewer</button>
+            <button class="nav-btn" data-page="report" id="nav-report">Report</button>
+        </div>
+        <div class="nav-status" id="system-status">
+            <div class="status-dot"></div>
+            <span>Checking...</span>
+        </div>
+    </nav>
+
+    <!-- ─── Main Content ─── -->
+    <main id="app-content">
+
+        <!-- ═══ UPLOAD PAGE ═══ -->
+        <section id="page-upload" class="page active">
+            <div class="page-header">
+                <h1>Single-Pass Drone Video → 3D Model</h1>
+                <p class="subtitle">Upload your drone footage and let our hybrid AI pipeline reconstruct a confidence-aware 3D model</p>
+            </div>
+
+            <div class="upload-grid">
+                <!-- Step 1: Create Project -->
+                <div class="card glass" id="card-project">
+                    <div class="card-step">01</div>
+                    <h2>Create Project</h2>
+                    <div class="form-group">
+                        <label for="project-name">Project Name</label>
+                        <input type="text" id="project-name" placeholder="e.g., Building Survey Alpha" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label for="project-desc">Description</label>
+                        <textarea id="project-desc" rows="2" placeholder="Optional description..."></textarea>
+                    </div>
+                    <button class="btn btn-primary" id="btn-create-project">
+                        <span>Create Project</span>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                    </button>
+                </div>
+
+                <!-- Step 2: Upload Video -->
+                <div class="card glass disabled" id="card-upload">
+                    <div class="card-step">02</div>
+                    <h2>Upload Drone Video</h2>
+                    <div class="upload-zone" id="upload-zone">
+                        <div class="upload-icon">
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                                <polyline points="17 8 12 3 7 8"/>
+                                <line x1="12" y1="3" x2="12" y2="15"/>
+                            </svg>
+                        </div>
+                        <p>Drag & drop your drone video here</p>
+                        <span class="upload-hint">MP4, MOV, AVI • 1080p or 4K</span>
+                        <input type="file" id="video-input" accept=".mp4,.mov,.avi,.mkv" hidden>
+                        <button class="btn btn-outline" id="btn-browse">Browse Files</button>
+                    </div>
+                    <div class="upload-progress hidden" id="upload-progress">
+                        <div class="progress-bar"><div class="progress-fill" id="upload-fill"></div></div>
+                        <span class="progress-text" id="upload-text">Uploading...</span>
+                    </div>
+                    <div class="video-info hidden" id="video-info"></div>
+                </div>
+
+                <!-- Step 3: Configure & Process -->
+                <div class="card glass disabled" id="card-config">
+                    <div class="card-step">03</div>
+                    <h2>Configure Pipeline</h2>
+                    <div class="config-grid">
+                        <div class="form-group">
+                            <label for="cfg-fps">Frame Rate (FPS)</label>
+                            <input type="number" id="cfg-fps" value="2" min="0.5" max="30" step="0.5">
+                        </div>
+                        <div class="form-group">
+                            <label for="cfg-max-frames">Max Frames</label>
+                            <input type="number" id="cfg-max-frames" value="500" min="10" max="2000">
+                        </div>
+                        <div class="form-group">
+                            <label for="cfg-sharpness">Min Sharpness</label>
+                            <input type="number" id="cfg-sharpness" value="50" min="0" max="500">
+                        </div>
+                        <div class="form-group">
+                            <label for="cfg-features">Min Features</label>
+                            <input type="number" id="cfg-features" value="100" min="10" max="5000">
+                        </div>
+                    </div>
+                    <div class="toggle-group">
+                        <label class="toggle">
+                            <input type="checkbox" id="cfg-gpu" checked>
+                            <span class="toggle-slider"></span>
+                            <span>Use GPU Acceleration</span>
+                        </label>
+                        <div class="form-group" id="gpu-select-group" style="display: none; margin-top: 10px;">
+                            <select id="cfg-gpu-device" style="background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); color: white; padding: 8px; border-radius: 4px; width: 100%; outline: none; margin-top: 5px;">
+                                <option value="" style="background: #1a2236;">Default</option>
+                            </select>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="cfg-depth-fusion" checked>
+                            <span class="toggle-slider"></span>
+                            <span>Enable Depth Fusion</span>
+                        </label>
+                        <label class="toggle">
+                            <input type="checkbox" id="cfg-dynamic-removal" checked>
+                            <span class="toggle-slider"></span>
+                            <span>Dynamic Object Removal</span>
+                        </label>
+                    </div>
+                    <button class="btn btn-accent btn-large" id="btn-start-processing">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                        <span>Start Reconstruction</span>
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══ DASHBOARD PAGE ═══ -->
+        <section id="page-dashboard" class="page">
+            <div class="page-header">
+                <h1>Processing Dashboard</h1>
+                <p class="subtitle" id="dashboard-subtitle">Monitor reconstruction progress in real-time</p>
+            </div>
+
+            <div class="dashboard-grid">
+                <!-- Progress Card -->
+                <div class="card glass card-wide" id="progress-card">
+                    <h2>Pipeline Progress</h2>
+                    <div class="pipeline-stages" id="pipeline-stages">
+                        <div class="stage" data-stage="extracting_frames">
+                            <div class="stage-indicator"></div>
+                            <span>Frame Extraction</span>
+                        </div>
+                        <div class="stage" data-stage="selecting_frames">
+                            <div class="stage-indicator"></div>
+                            <span>Frame Selection</span>
+                        </div>
+                        <div class="stage" data-stage="estimating_poses">
+                            <div class="stage-indicator"></div>
+                            <span>Pose Estimation</span>
+                        </div>
+                        <div class="stage" data-stage="estimating_depth">
+                            <div class="stage-indicator"></div>
+                            <span>Depth Estimation</span>
+                        </div>
+                        <div class="stage" data-stage="reconstructing">
+                            <div class="stage-indicator"></div>
+                            <span>Reconstruction</span>
+                        </div>
+                        <div class="stage" data-stage="generating_mesh">
+                            <div class="stage-indicator"></div>
+                            <span>Mesh Generation</span>
+                        </div>
+                        <div class="stage" data-stage="completed">
+                            <div class="stage-indicator"></div>
+                            <span>Complete</span>
+                        </div>
+                    </div>
+                    <div class="progress-bar large"><div class="progress-fill" id="pipeline-fill"></div></div>
+                    <p class="progress-message" id="pipeline-message">Waiting to start...</p>
+                </div>
+
+                <!-- Stats Cards -->
+                <div class="stats-row" id="stats-row">
+                    <div class="stat-card glass">
+                        <div class="stat-value" id="stat-frames">—</div>
+                        <div class="stat-label">Frames Extracted</div>
+                    </div>
+                    <div class="stat-card glass">
+                        <div class="stat-value" id="stat-selected">—</div>
+                        <div class="stat-label">Frames Selected</div>
+                    </div>
+                    <div class="stat-card glass">
+                        <div class="stat-value" id="stat-poses">—</div>
+                        <div class="stat-label">Poses Recovered</div>
+                    </div>
+                    <div class="stat-card glass">
+                        <div class="stat-value" id="stat-points">—</div>
+                        <div class="stat-label">3D Points</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══ 3D VIEWER PAGE ═══ -->
+        <section id="page-viewer" class="page">
+            <div class="viewer-container">
+                <div class="viewer-toolbar" id="viewer-toolbar">
+                    <button class="tool-btn active" data-mode="orbit" title="Orbit">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/></svg>
+                    </button>
+                    <button class="tool-btn" data-mode="pan" title="Pan">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3"/></svg>
+                    </button>
+                    <div class="toolbar-divider"></div>
+                    <button class="tool-btn" id="btn-toggle-confidence" title="Toggle Confidence Colors">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20"/><circle cx="12" cy="12" r="6"/></svg>
+                    </button>
+                    <button class="tool-btn" id="btn-reset-view" title="Reset View">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6M23 20v-6h-6"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg>
+                    </button>
+                    <div class="toolbar-divider"></div>
+                    <button class="tool-btn" id="btn-load-pointcloud" title="Load Point Cloud">Load Model</button>
+                </div>
+                <canvas id="viewer-canvas"></canvas>
+                <div class="viewer-info" id="viewer-info">
+                    <span id="viewer-point-count">No model loaded</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══ REPORT PAGE ═══ -->
+        <section id="page-report" class="page">
+            <div class="page-header">
+                <h1>Reconstruction Report</h1>
+                <p class="subtitle">Quality metrics and confidence analysis</p>
+            </div>
+
+            <div class="report-grid" id="report-content">
+                <div class="card glass">
+                    <h2>No report available yet</h2>
+                    <p>Complete a reconstruction to generate a quality report.</p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script type="module" src="/js/app.js"></script>
+</body>
+</html>
