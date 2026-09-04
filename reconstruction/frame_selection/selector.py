@@ -1,171 +1,98 @@
-"""
-Intelligent Frame Selector — Selects the optimal subset of frames
-for reconstruction based on quality scores, viewpoint diversity,
-and GPS displacement. This is a key innovation module.
-"""
-from __future__ import annotations
 import cv2
-import numpy as np
-from typing import List, Optional
+import os
+from pathlib import Path
+from typing import List
 from loguru import logger
 
-from backend.app.models.schemas import FrameQuality
-
-
-class IntelligentFrameSelector:
+class VideoPreprocessor:
     """
-    Select the optimal frame subset for reconstruction.
-
-    Innovation: Information-aware selection that maximizes reconstruction
-    quality while minimizing redundancy and computation.
+    Ingests a video file, extracts frames at a target FPS, applies a Laplacian variance
+    quality gate to discard blurry frames, and aggressively downscales accepted frames.
     """
 
     def __init__(
         self,
-        min_sharpness: float = 50.0,
-        min_feature_count: int = 100,
-        min_composite_score: float = 30.0,
-        min_parallax_pixels: float = 20.0,
-        max_frames: int = 300,
-    ):
-        self.min_sharpness = min_sharpness
-        self.min_feature_count = min_feature_count
-        self.min_composite_score = min_composite_score
-        self.min_parallax_pixels = min_parallax_pixels
-        self.max_frames = max_frames
-
-    def select(
-        self,
-        frame_qualities: List[FrameQuality],
-        frame_paths: List[str],
-    ) -> List[FrameQuality]:
+        upload_dir: str | Path = "data/uploads",
+        frames_dir: str | Path = "data/frames",
+        target_fps: float = 4.0,
+        blur_threshold: float = 100.0,
+        max_dim: int = 1024,
+    ) -> None:
         """
-        Multi-stage frame selection:
-        1. Quality gate — reject blurry/dark/featureless frames
-        2. Diversity filter — ensure sufficient viewpoint change
-        3. Budget cap — respect max_frames limit
+        Initializes the VideoPreprocessor.
         """
-        logger.info(f"Selecting from {len(frame_qualities)} candidate frames...")
+        self.upload_dir = Path(upload_dir)
+        self.frames_dir = Path(frames_dir)
+        self.target_fps = target_fps
+        self.blur_threshold = blur_threshold
+        self.max_dim = max_dim
 
-        # Stage 1: Quality gate
-        quality_passed = self._quality_gate(frame_qualities)
-        logger.info(f"  Quality gate: {len(quality_passed)}/{len(frame_qualities)} passed")
+        # Ensure directories exist
+        self.upload_dir.mkdir(parents=True, exist_ok=True)
+        self.frames_dir.mkdir(parents=True, exist_ok=True)
 
-        # Stage 2: Diversity filter via visual parallax
-        diverse = self._diversity_filter(quality_passed, frame_paths)
-        logger.info(f"  Diversity filter: {len(diverse)} frames selected")
-
-        # Stage 3: Budget cap
-        if len(diverse) > self.max_frames:
-            diverse.sort(key=lambda f: f.composite_score, reverse=True)
-            diverse = diverse[:self.max_frames]
-            diverse.sort(key=lambda f: f.frame_index)
-            logger.info(f"  Budget cap: trimmed to {self.max_frames} frames")
-
-        # Mark selected frames
-        for fq in diverse:
-            fq.selected = True
-
-        logger.info(
-            f"Final selection: {len(diverse)} frames "
-            f"(mean score: {np.mean([f.composite_score for f in diverse]):.1f})"
-        )
-        return diverse
-
-    def _quality_gate(self, frames: List[FrameQuality]) -> List[FrameQuality]:
-        """Reject frames below quality thresholds."""
-        passed = []
-        for fq in frames:
-            if (
-                fq.sharpness_score >= self.min_sharpness
-                and fq.feature_count >= self.min_feature_count
-                and fq.composite_score >= self.min_composite_score
-            ):
-                passed.append(fq)
-
-        # Always keep first and last frame
-        if frames and frames[0] not in passed:
-            passed.insert(0, frames[0])
-        if frames and frames[-1] not in passed:
-            passed.append(frames[-1])
-
-        return passed
-
-    def _diversity_filter(
-        self,
-        frames: List[FrameQuality],
-        frame_paths: List[str],
-    ) -> List[FrameQuality]:
+    def process(self, video_filename: str) -> List[Path]:
         """
-        Ensure sufficient visual diversity between selected frames.
-        Uses optical flow to estimate parallax between consecutive frames.
+        Process the video and return a list of paths to the saved curated frames.
+        
+        Args:
+            video_filename: The name of the video file in the upload directory.
+            
+        Returns:
+            A list of Paths pointing to the successfully extracted and downscaled frames.
         """
-        if len(frames) <= 2:
-            return frames
+        video_path = self.upload_dir / video_filename
+        if not video_path.exists():
+            raise FileNotFoundError(f"Video file not found: {video_path}")
 
-        selected = [frames[0]]  # Always keep first
-        prev_gray = None
+        logger.info(f"Starting VideoPreprocessor for {video_filename}")
+        
+        cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            raise RuntimeError(f"Failed to open video: {video_path}")
 
-        # Build path lookup
-        path_map = {}
-        for fq in frames:
-            if fq.frame_index < len(frame_paths):
-                path_map[fq.frame_index] = frame_paths[fq.frame_index]
+        video_fps = cap.get(cv2.CAP_PROP_FPS)
+        if video_fps <= 0:
+            logger.warning("Could not detect video FPS, falling back to 30.0 FPS")
+            video_fps = 30.0
+            
+        frame_interval = max(1, int(round(video_fps / self.target_fps)))
+        logger.info(f"Detected FPS: {video_fps:.2f} | Extracting 1 frame every {frame_interval} frames (~{self.target_fps} FPS)")
 
-        for fq in frames:
-            path = path_map.get(fq.frame_index)
-            if path is None:
-                continue
+        saved_frames: List[Path] = []
+        frame_idx = 0
+        saved_idx = 0
 
-            img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-            if img is None:
-                continue
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
 
-            # Resize for speed
-            small = cv2.resize(img, (640, 360))
+            if frame_idx % frame_interval == 0:
+                # 1. Quality Gate: Laplacian Variance
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                variance = cv2.Laplacian(gray, cv2.CV_64F).var()
 
-            if prev_gray is None:
-                prev_gray = small
-                continue
+                if variance < self.blur_threshold:
+                    logger.debug(f"Frame {frame_idx} rejected: Blurry (Variance {variance:.2f} < {self.blur_threshold})")
+                else:
+                    # 2. Memory Optimization: Aggressive Downscaling (Maintain Aspect Ratio)
+                    h, w = frame.shape[:2]
+                    if max(h, w) > self.max_dim:
+                        scale = float(self.max_dim) / max(h, w)
+                        new_w, new_h = int(w * scale), int(h * scale)
+                        frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-            # Compute optical flow magnitude as parallax proxy
-            flow = cv2.calcOpticalFlowFarneback(
-                prev_gray, small, None,
-                pyr_scale=0.5, levels=3, winsize=15,
-                iterations=3, poly_n=5, poly_sigma=1.2, flags=0
-            )
-            magnitude = np.sqrt(flow[..., 0]**2 + flow[..., 1]**2)
-            mean_parallax = float(np.mean(magnitude))
+                    # Save the curated frame
+                    frame_name = f"frame_{saved_idx:05d}.jpg"
+                    out_path = self.frames_dir / frame_name
+                    
+                    cv2.imwrite(str(out_path), frame)
+                    saved_frames.append(out_path)
+                    saved_idx += 1
 
-            if mean_parallax >= self.min_parallax_pixels:
-                selected.append(fq)
-                prev_gray = small
-            # else: skip this frame (too similar to previous)
+            frame_idx += 1
 
-        # Always include last frame
-        if frames[-1] not in selected:
-            selected.append(frames[-1])
-
-        return selected
-
-    def get_selection_summary(
-        self,
-        all_frames: List[FrameQuality],
-        selected: List[FrameQuality],
-    ) -> dict:
-        """Generate a summary of the selection process."""
-        all_scores = [f.composite_score for f in all_frames]
-        sel_scores = [f.composite_score for f in selected]
-
-        return {
-            "total_extracted": len(all_frames),
-            "total_selected": len(selected),
-            "reduction_ratio": round(1 - len(selected) / max(len(all_frames), 1), 3),
-            "mean_score_all": round(float(np.mean(all_scores)), 2),
-            "mean_score_selected": round(float(np.mean(sel_scores)), 2),
-            "min_score_selected": round(float(np.min(sel_scores)), 2),
-            "max_score_selected": round(float(np.max(sel_scores)), 2),
-            "quality_improvement": round(
-                float(np.mean(sel_scores) - np.mean(all_scores)), 2
-            ),
-        }
+        cap.release()
+        logger.info(f"VideoPreprocessor completed. Extracted {len(saved_frames)} high-quality frames to {self.frames_dir}")
+        return saved_frames

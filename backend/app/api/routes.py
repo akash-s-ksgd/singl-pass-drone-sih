@@ -29,19 +29,31 @@ jobs: Dict[str, JobProgress] = {}
 reports: Dict[str, ReconstructionReport] = {}
 
 
-def _get_video_info(video_path: Path) -> dict:
-    """Extract basic video information using OpenCV."""
+def _get_media_info(file_path: Path) -> dict:
+    """Extract basic media information using OpenCV."""
     import cv2
-    cap = cv2.VideoCapture(str(video_path))
-    info = {
-        "duration": cap.get(cv2.CAP_PROP_FRAME_COUNT) / max(cap.get(cv2.CAP_PROP_FPS), 1),
-        "fps": cap.get(cv2.CAP_PROP_FPS),
-        "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-        "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-        "frame_count": int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
-    }
-    cap.release()
-    return info
+    if file_path.suffix.lower() in ['.jpg', '.jpeg', '.png']:
+        img = cv2.imread(str(file_path))
+        return {
+            "duration": 0.0,
+            "fps": 1.0,
+            "width": int(img.shape[1]) if img is not None else 0,
+            "height": int(img.shape[0]) if img is not None else 0,
+            "frame_count": 1,
+            "is_image": True
+        }
+    else:
+        cap = cv2.VideoCapture(str(file_path))
+        info = {
+            "duration": cap.get(cv2.CAP_PROP_FRAME_COUNT) / max(cap.get(cv2.CAP_PROP_FPS), 1),
+            "fps": cap.get(cv2.CAP_PROP_FPS),
+            "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+            "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+            "frame_count": int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
+            "is_image": False
+        }
+        cap.release()
+        return info
 
 
 # ─── Project & Upload ───────────────────────────────────────────────
@@ -86,8 +98,8 @@ async def upload_video(project_id: str, video: UploadFile = File(...)):
     if project_id not in projects:
         raise HTTPException(404, "Project not found")
 
-    if not video.filename.lower().endswith(('.mp4', '.mov', '.avi', '.mkv')):
-        raise HTTPException(400, "Unsupported video format. Use MP4, MOV, AVI, or MKV.")
+    if not video.filename.lower().endswith(('.mp4', '.mov', '.avi', '.mkv', '.jpg', '.jpeg', '.png')):
+        raise HTTPException(400, "Unsupported media format. Use MP4, MOV, AVI, MKV, JPG, or PNG.")
 
     # Save the uploaded video
     upload_path = settings.upload_dir / project_id / video.filename
@@ -98,8 +110,8 @@ async def upload_video(project_id: str, video: UploadFile = File(...)):
     file_size_mb = upload_path.stat().st_size / (1024 * 1024)
     projects[project_id]["video_filename"] = video.filename
 
-    # Get video info
-    info = _get_video_info(upload_path)
+    # Get media info
+    info = _get_media_info(upload_path)
 
     return UploadResponse(
         project_id=project_id,
