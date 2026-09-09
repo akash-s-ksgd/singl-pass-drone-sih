@@ -4,83 +4,85 @@ import open3d as o3d
 import os
 import glob
 from pathlib import Path
+from loguru import logger
 
-print("🚀 VIBE CODER: OVERRIDE PROTOCOL INITIATED.")
+class VibeProjector:
+    """
+    Enterprise-grade 3D Projection Engine. 
+    Converts directories of 2D RGB frames and AI Depth Maps into Dense 3D Point Clouds.
+    """
+    def __init__(self, base_dir: str):
+        self.base_dir = Path(base_dir).resolve()
+        self.frames_dir = self.base_dir / "data" / "frames"
+        self.depth_dir = self.base_dir / "data" / "outputs" / "depth_maps"
+        self.dense_dir = self.base_dir / "data" / "outputs" / "dense"
+        self.dense_dir.mkdir(parents=True, exist_ok=True)
 
-# 1. Hardcore Path Resolution
-BASE_DIR = Path(os.getcwd()).resolve()
-print(f"📍 System Root Locked: {BASE_DIR}")
+    def process_all_frames(self):
+        logger.info("🌌 IGNITING MATRIX PROJECTION FOR ALL FRAMES...")
+        frames = sorted(glob.glob(str(self.frames_dir / "*.jpg")) + glob.glob(str(self.frames_dir / "*.png")))
+        
+        if not frames:
+            logger.error(f"❌ No frames found in {self.frames_dir}")
+            return False
 
-frames_dir = BASE_DIR / "data" / "frames"
-depth_dir = BASE_DIR / "data" / "outputs" / "depth_maps"
-dense_dir = BASE_DIR / "data" / "outputs" / "dense"
-dense_dir.mkdir(parents=True, exist_ok=True)
+        successful_projections = 0
 
-# 2. Find Targets
-frames = sorted(glob.glob(str(frames_dir / "*.jpg")) + glob.glob(str(frames_dir / "*.png")))
-if not frames:
-    raise FileNotFoundError(f"❌ CRITICAL: No frames found in {frames_dir}")
+        for frame_path in frames:
+            target_frame = Path(frame_path)
+            target_depth = self.depth_dir / f"depth_{target_frame.name}"
 
-target_frame = Path(frames[0])
-target_depth = depth_dir / f"depth_{target_frame.name}"
+            if not target_depth.exists():
+                logger.warning(f"⚠️ Skipping {target_frame.name} - No matching depth map found.")
+                continue
 
-if not target_depth.exists():
-    raise FileNotFoundError(f"❌ CRITICAL: Depth map missing at {target_depth}")
+            try:
+                self._project_single_frame(target_frame, target_depth)
+                successful_projections += 1
+            except Exception as e:
+                logger.error(f"❌ Failed to project {target_frame.name}: {str(e)}")
 
-print(f"🎯 Target Acquired: {target_frame.name}")
+        logger.info(f"✅ BATCH COMPLETE: Successfully forged {successful_projections}/{len(frames)} 3D models.")
+        return successful_projections > 0
 
-# 3. Load Data with Aggressive Type Checking
-# 3. Load Data with Aggressive Type Checking
-print("⚙️ Loading pixels into memory...")
-img = cv2.imread(str(target_frame))
-depth = cv2.imread(str(target_depth), cv2.IMREAD_GRAYSCALE)
+    def _project_single_frame(self, target_frame: Path, target_depth: Path):
+        img = cv2.imread(str(target_frame))
+        depth = cv2.imread(str(target_depth), cv2.IMREAD_GRAYSCALE)
 
-# --- VIBE CODER FIX: FORCE 32-BIT FLOAT TENSOR ---
-depth = depth.astype(np.float32)
-# -------------------------------------------------
+        if img is None or depth is None:
+            raise ValueError("OpenCV failed to load images.")
 
-if img is None:
-    raise ValueError(f"❌ OpenCV failed to load the RGB frame at {target_frame}")
-if depth is None:
-    raise ValueError(f"❌ OpenCV failed to load the Depth map at {target_depth}")
+        if img.shape[:2] != depth.shape[:2]:
+            depth = cv2.resize(depth, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_NEAREST)
 
-img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-# 4. Open3D Matrix Operations
-print("⚙️ Fusing RGB and Depth via Open3D tensors...")
-try:
-    color_o3d = o3d.geometry.Image(img)
-    depth_o3d = o3d.geometry.Image(depth)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        h, w = depth.shape
 
-    rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
-        color_o3d, depth_o3d, 
-        depth_scale=255.0, 
-        depth_trunc=1000.0, 
-        convert_rgb_to_intensity=False
-    )
+        fx, fy = w * 0.8, w * 0.8
+        cx, cy = w // 2, h // 2
+        u, v = np.meshgrid(np.arange(w), np.arange(h))
+        
+        # Absolute Brute-Force Matrix Extraction
+        z = np.clip((depth.astype(np.float64) / 255.0) * 10.0, 0.1, 10.0)
+        u, v, z = u.flatten(), v.flatten(), z.flatten()
+        
+        x = (u - cx) * z / fx
+        y = (v - cy) * z / fy
+        
+        points = np.stack((x, y, z), axis=-1).astype(np.float64)
+        colors = (img.reshape(-1, 3) / 255.0).astype(np.float64)
 
-    print("🌌 Projecting into 3D Space...")
-    h, w = depth.shape
-    fx, fy = w * 0.8, w * 0.8
-    cx, cy = w // 2, h // 2
-    
-    intrinsics = o3d.camera.PinholeCameraIntrinsic(w, h, fx, fy, cx, cy)
-    pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, intrinsics)
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points)
+        pcd.colors = o3d.utility.Vector3dVector(colors)
+        pcd.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
 
-    # Invert Y and Z for correct 3D orientation
-    pcd.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
+        out_file = self.dense_dir / f"dense_{target_frame.stem}.ply"
+        if not o3d.io.write_point_cloud(str(out_file), pcd):
+            raise RuntimeError("Open3D write operation failed.")
+        
+        logger.debug(f"Saved: {out_file.name} ({len(pcd.points):,} points)")
 
-except Exception as e:
-    raise RuntimeError(f"❌ Open3D Matrix Math Failed: {str(e)}")
-
-# 5. Bruteforce Write & Verify
-out_file = dense_dir / f"dense_{target_frame.stem}.ply"
-print(f"💾 Writing geometry to disk: {out_file}")
-
-success = o3d.io.write_point_cloud(str(out_file), pcd)
-
-if success and out_file.exists():
-    file_size = out_file.stat().st_size / (1024 * 1024)
-    print(f"✅ SUCCESS! 3D Model materialized in reality.")
-    print(f"📏 File Size: {file_size:.2f} MB")
-else:
-    raise RuntimeError(f"❌ Write operation failed! Open3D could not save to {out_file}")
+if __name__ == "__main__":
+    projector = VibeProjector(os.getcwd())
+    projector.process_all_frames()
